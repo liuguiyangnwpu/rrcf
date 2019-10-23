@@ -2,11 +2,12 @@
 
 import os
 import dill
-import time
+import timeit
 import pandas as pd
 from collections import deque
 import matplotlib.pyplot as plt
 from multiprocessing import Pool, Manager
+from sklearn.ensemble import IsolationForest
 from rrcf import RCTree
 
 
@@ -22,7 +23,7 @@ def data_explore(is_show=True):
     data_frame.sort_values(["time"], inplace=True)
     data_frame["time"] = pd.to_datetime(data_frame["time"], unit="s")
     data_frame.set_index(["time"], inplace=True)
-    print(data_frame)
+    print(data_frame.head(3))
 
     if is_show:
         fig, ax = plt.subplots(3, figsize=(12, 7))
@@ -44,6 +45,18 @@ def __create_tree__(tree_id, data_frame, result_dict):
     result_dict[tree_id] = tree_dumps
 
 
+def benchmark_create_rrcf():
+    num_trees = 5
+    def single_func(tree_id, data_frame):
+        tree = RCTree(data_frame.values, index_labels=list(data_frame.index))
+
+    start = timeit.default_timer()
+    for idx in range(num_trees):
+        single_func(idx, history_samples)
+    stop = timeit.default_timer()
+    print("total spend is {}; avg spend is {}".format(stop-start, (stop-start)/num_trees))
+
+
 def __calc_avg_codisp_socre__(tree_id, tree_dump, data_frame, result_dict):
     tree = dill.loads(tree_dump)
     print("tree_id is {}".format(tree_id))
@@ -53,19 +66,34 @@ def __calc_avg_codisp_socre__(tree_id, tree_dump, data_frame, result_dict):
     result_dict[tree_id] = anomaly_score
 
 
+# Set tree parameters
+num_trees = 100
+tree_size = 6000
+history_queue = deque([], maxlen=tree_size)
+
+n = 5000
+data_frame = data_explore(is_show=False)
+history_samples = data_frame[:n]
+testing_samples = data_frame[n:]
+
+
+def flow_detector_by_isolate_forest():
+    # fit the model
+    clf = IsolationForest(n_estimators=100,
+                          behaviour='new',
+                          max_samples=n*2,
+                          contamination='auto',
+                          n_jobs=1,
+                          verbose=1)
+    clf.fit(history_samples.values)
+    pred = clf.predict(history_samples.values)
+    print(pred)
+
+
 def flow_detector():
-    # Set tree parameters
-    num_trees = 100
-    tree_size = 6000
-    history_queue = deque([], maxlen=tree_size)
-
-    n = 5000
-    data_frame = data_explore(is_show=False)
-    history_samples = data_frame[:n]
-    testing_samples = data_frame[n:]
-
     anomaly_score = pd.Series(0.0, index=data_frame.index)
 
+    start = timeit.default_timer()
     manager = Manager()
     return_dict = manager.dict()
     pool = Pool(processes=5)
@@ -74,7 +102,9 @@ def flow_detector():
     pool.close()
     pool.join()
     forest = [dill.loads(obj) for obj in return_dict.values()]
-    print("forest length is {}".format(len(forest)))
+    stop = timeit.default_timer()
+    print("forest length is {}, Time: {}".format(len(forest), stop-start))
+    return
 
     manager_history = Manager()
     return_history_dict = manager_history.dict()
@@ -124,32 +154,20 @@ def flow_detector():
         plt.show()
 
 
-import numpy as np
-from rrcf.leaf import Leaf
+from rrcf.crcf import RobustRandomCutTree
+def test_crcf():
+    start = timeit.default_timer()
+    for i in range(num_trees):
+        obj = RobustRandomCutTree(depth_limit=100)
+        obj.fit(history_samples.values)
+        pred = obj.score(history_samples.values)
+    stop = timeit.default_timer()
+    print("total spend is {}, avg spend is {}".format(stop-start, (stop-start)/num_trees))
 
-
-class A(object):
-    def __init__(self):
-        self.tree = Leaf(i=10, x=np.ones(10, np.int))
-        self.a = None
-
-    def __str__(self):
-        def func():
-            return "hello world"
-        return func()
-
-    def __repr__(self):
-        def func():
-            return "dfgdfgfdhgf"
-        return func()
-
-    def func(self, op=(lambda x: None)):
-        op([1,2,3])
 
 
 if __name__ == '__main__':
-    flow_detector()
-    a = A()
-    print(str(a))
-    import pickle as pkl
-    a = pkl.dumps(a)
+    # flow_detector()
+    # flow_detector_by_isolate_forest()
+    benchmark_create_rrcf()
+    # test_crcf()

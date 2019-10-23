@@ -6,65 +6,7 @@ from .branch import Branch
 
 
 class RCTree(object):
-    """
-    Robust random cut tree data structure as described in:
-
-    S. Guha, N. Mishra, G. Roy, & O. Schrijvers. Robust random cut forest based anomaly
-    detection on streams, in Proceedings of the 33rd International conference on machine
-    learning, New York, NY, 2016 (pp. 2712-2721).
-
-    Parameters:
-    -----------
-    X: np.ndarray (n x d) (optional)
-       Array containing n data points, each with dimension d.
-       If no data provided, an empty tree is created.
-    random_state: int, RandomState instance or None (optional) (default=None)
-        If int, random_state is the seed used by the random number generator;
-        If RandomState instance, random_state is the random number generator;
-        If None, the random number generator is the RandomState instance used by np.random.
-
-    Attributes:
-    -----------
-    root: Branch or Leaf instance
-          Pointer to root of tree.
-    leaves: dict
-            Dict containing pointers to all leaves in tree.
-    ndim: int
-          dimension of points in the tree
-
-    Methods:
-    --------
-    insert_point: inserts a new point into the tree.
-    forget_point: removes a point from the tree.
-    disp: compute displacement associated with the removal of a leaf.
-    codisp: compute collusive displacement associated with the removal of a leaf
-            (anomaly score).
-    map_leaves: traverses all nodes in the tree and executes a user-specified
-                function on the leaves.
-    map_branches: traverses all nodes in the tree and executes a user-specified
-                  function on the branches.
-    query: finds nearest point in tree.
-    get_bbox: find bounding box of points under a given node.
-    find_duplicate: finds duplicate points in the tree.
-
-    Example:
-    --------
-    # Create RCTree
-    >>> X = np.random.randn(100,2)
-    >>> tree = RCTree(X)
-
-    # Insert a point
-    >>> x = np.random.randn(2)
-    >>> tree.insert_point(x, index=100)
-
-    # Compute collusive displacement of new point (anomaly score)
-    >>> tree.codisp(100)
-
-    # Remove point
-    >>> tree.forget_point(100)
-    """
-
-    def __init__(self, X=None, index_labels=None, precision=9, random_state=None):
+    def __init__(self, X=None, index_labels=None, max_depth=10, precision=9, random_state=None):
         # Random number generation with provided seed
         if isinstance(random_state, int):
             self.rng = np.random.RandomState(random_state)
@@ -77,36 +19,37 @@ class RCTree(object):
         # Initialize tree root
         self.root = None
         self.ndim = None
-        if X is not None:
-            # Round data to avoid sorting errors
-            X = np.around(X, decimals=precision)
-            # Initialize index labels, if they exist
-            if index_labels is None:
-                index_labels = np.arange(X.shape[0], dtype=int)
-            self.index_labels = index_labels
-            # Check for duplicates
-            U, I, N = np.unique(X, return_inverse=True, return_counts=True, axis=0)
-            # If duplicates exist, take unique elements
-            if N.max() > 1:
-                n, d = U.shape
-                X = U
-            else:
-                n, d = X.shape
-                N = np.ones(n, dtype=np.int)
-                I = None
-            # Store dimension of dataset
-            self.ndim = d
-            # Set node above to None in case of bottom-up search
-            self.u = None
-            # Create RRC Tree
-            S = np.ones(n, dtype=np.bool)
-            self._mk_tree_(X, S, N, I, parent=self)
-            # Remove parent of root
-            self.root.u = None
-            # Count all leaves under each branch
-            self._count_all_top_down_(self.root)
-            # Set bboxes of all branches
-            self._get_bbox_top_down_(self.root)
+        self.max_depth = max_depth
+
+        # Round data to avoid sorting errors
+        X = np.around(X, decimals=precision)
+        # Initialize index labels, if they exist
+        if index_labels is None:
+            index_labels = np.arange(X.shape[0], dtype=int)
+        self.index_labels = index_labels
+        # Check for duplicates
+        U, I, N = np.unique(X, return_inverse=True, return_counts=True, axis=0)
+        # If duplicates exist, take unique elements
+        if N.max() > 1:
+            n, d = U.shape
+            X = U
+        else:
+            n, d = X.shape
+            N = np.ones(n, dtype=np.int)
+            I = None
+        # Store dimension of dataset
+        self.ndim = d
+        # Set node above to None in case of bottom-up search
+        self.u = None
+        # Create RRC Tree
+        S = np.ones(n, dtype=np.bool)
+        self._mk_tree_(X, S, N, I, parent=self)
+        # Remove parent of root
+        self.root.u = None
+        # Count all leaves under each branch
+        self._count_all_top_down_(self.root)
+        # Set bboxes of all branches
+        self._get_bbox_top_down_(self.root)
 
     def __repr__(self):
         depth = ""
@@ -164,6 +107,8 @@ class RCTree(object):
 
     def _mk_tree_(self, X, S, N, I, parent=None, side='root', depth=0):
         # Increment depth as we traverse down
+        # if depth > self.max_depth:
+        #     return
         depth += 1
         # Create a cut according to definition 1
         S1, S2, branch = self._cut_(X, S, parent=parent, side=side)
@@ -215,38 +160,6 @@ class RCTree(object):
         depth -= 1
 
     def map_leaves(self, node, op=(lambda x: None), *args, **kwargs):
-        """
-        Traverse tree recursively, calling operation given by op on leaves
-
-        Parameters:
-        -----------
-        node: node in RCTree
-        op: function to call on each leaf
-        *args: positional arguments to op
-        **kwargs: keyword arguments to op
-
-        Returns:
-        --------
-        None
-
-        Example:
-        --------
-        # Use map_leaves to print leaves in postorder
-        >>> X = np.random.randn(10, 2)
-        >>> tree = RCTree(X)
-        >>> tree.map_leaves(tree.root, op=print)
-
-        Leaf(5)
-        Leaf(9)
-        Leaf(4)
-        Leaf(0)
-        Leaf(6)
-        Leaf(2)
-        Leaf(3)
-        Leaf(7)
-        Leaf(1)
-        Leaf(8)
-        """
         if isinstance(node, Branch):
             if node.l:
                 self.map_leaves(node.l, op=op, *args, **kwargs)
@@ -256,40 +169,6 @@ class RCTree(object):
             op(node, *args, **kwargs)
 
     def map_branches(self, node, op=(lambda x: None), *args, **kwargs):
-        """
-        Traverse tree recursively, calling operation given by op on branches
-
-        Parameters:
-        -----------
-        node: node in RCTree
-        op: function to call on each branch
-        *args: positional arguments to op
-        **kwargs: keyword arguments to op
-
-        Returns:
-        --------
-        None
-
-        Example:
-        --------
-        # Use map_branches to collect all branches in a list
-        >>> X = np.random.randn(10, 2)
-        >>> tree = RCTree(X)
-        >>> branches = []
-        >>> tree.map_branches(tree.root, op=(lambda x, stack: stack.append(x)),
-                            stack=branches)
-        >>> branches
-
-        [Branch(q=0, p=-0.53),
-        Branch(q=0, p=-0.35),
-        Branch(q=1, p=-0.67),
-        Branch(q=0, p=-0.15),
-        Branch(q=0, p=0.23),
-        Branch(q=1, p=0.29),
-        Branch(q=1, p=1.31),
-        Branch(q=0, p=0.62),
-        Branch(q=1, p=0.86)]
-        """
         if isinstance(node, Branch):
             if node.l:
                 self.map_branches(node.l, op=op, *args, **kwargs)
@@ -298,31 +177,6 @@ class RCTree(object):
             op(node, *args, **kwargs)
 
     def forget_point(self, index):
-        """
-        Delete leaf from tree
-
-        Parameters:
-        -----------
-        index: (Hashable type)
-               Index of leaf in tree
-
-        Returns:
-        --------
-        leaf: Leaf instance
-              Deleted leaf
-
-        Example:
-        --------
-        # Create RCTree
-        >>> tree = RCTree()
-
-        # Insert a point
-        >>> x = np.random.randn(2)
-        >>> tree.insert_point(x, index=0)
-
-        # Forget point
-        >>> tree.forget_point(0)
-        """
         try:
             # Get leaf from leaves dict
             leaf = self.leaves[index]
@@ -388,31 +242,6 @@ class RCTree(object):
             node = node.u
 
     def insert_point(self, point, index, tolerance=None):
-        """
-        Inserts a point into the tree, creating a new leaf
-
-        Parameters:
-        -----------
-        point: np.ndarray (1 x d)
-        index: (Hashable type)
-               Identifier for new leaf in tree
-        tolerance: float
-                   Tolerance for determining duplicate points
-
-        Returns:
-        --------
-        leaf: Leaf
-              New leaf in tree
-
-        Example:
-        --------
-        # Create RCTree
-        >>> tree = RCTree()
-
-        # Insert a point
-        >>> x = np.random.randn(2)
-        >>> tree.insert_point(x, index=0)
-        """
         if not isinstance(point, np.ndarray):
             point = np.asarray(point)
         point = point.ravel()
@@ -495,36 +324,6 @@ class RCTree(object):
         return leaf
 
     def query(self, point, node=None):
-        """
-        Search for leaf nearest to point
-
-        Parameters:
-        -----------
-        point: np.ndarray (1 x d)
-               Point to search for
-        node: Branch instance
-              Defaults to root node
-
-        Returns:
-        --------
-        nearest: Leaf
-                 Leaf nearest to queried point in the tree
-
-        Example:
-        --------
-        # Create RCTree
-        >>> X = np.random.randn(10, 2)
-        >>> tree = rrcf.RCTree(X)
-
-        # Insert new point
-        >>> new_point = np.array([4, 4])
-        >>> tree.insert_point(new_point, index=10)
-
-        # Query tree for point with added noise
-        >>> tree.query(new_point + 1e-5)
-
-        Leaf(10)
-        """
         if not isinstance(point, np.ndarray):
             point = np.asarray(point)
         point = point.ravel()
@@ -533,31 +332,6 @@ class RCTree(object):
         return self._query_(point, node)
 
     def disp(self, leaf):
-        """
-        Compute displacement at leaf
-
-        Parameters:
-        -----------
-        leaf: index of leaf or Leaf instance
-
-        Returns:
-        --------
-        displacement: int
-                      Displacement if leaf is removed
-
-        Example:
-        --------
-        # Create RCTree
-        >>> X = np.random.randn(100, 2)
-        >>> tree = rrcf.RCTree(X)
-        >>> new_point = np.array([4, 4])
-        >>> tree.insert_point(new_point, index=100)
-
-        # Compute displacement
-        >>> tree.disp(100)
-
-        12
-        """
         if not isinstance(leaf, Leaf):
             try:
                 leaf = self.leaves[leaf]
@@ -578,31 +352,6 @@ class RCTree(object):
         return displacement
 
     def codisp(self, leaf):
-        """
-        Compute collusive displacement at leaf
-
-        Parameters:
-        -----------
-        leaf: index of leaf or Leaf instance
-
-        Returns:
-        --------
-        codisplacement: float
-                        Collusive displacement if leaf is removed.
-
-        Example:
-        --------
-        # Create RCTree
-        >>> X = np.random.randn(100, 2)
-        >>> tree = rrcf.RCTree(X)
-        >>> new_point = np.array([4, 4])
-        >>> tree.insert_point(new_point, index=100)
-
-        # Compute collusive displacement
-        >>> tree.codisp(100)
-
-        31.667
-        """
         if not isinstance(leaf, Leaf):
             try:
                 leaf = self.leaves[leaf]
@@ -631,29 +380,6 @@ class RCTree(object):
         return co_displacement
 
     def get_bbox(self, branch=None):
-        """
-        Compute bounding box of all points underneath a given branch.
-
-        Parameters:
-        -----------
-        branch: Branch instance
-                Starting branch. Defaults to root of tree.
-
-        Returns:
-        --------
-        bbox: np.ndarray (2 x d)
-              Bounding box of all points underneath branch
-
-        Example:
-        --------
-        # Create RCTree and compute bbox
-        >>> X = np.random.randn(10, 3)
-        >>> tree = rrcf.RCTree(X)
-        >>> tree.get_bbox()
-
-        array([[-0.8600458 , -1.69756215, -1.16659065],
-               [ 2.48455863,  1.02869042,  1.09414144]])
-        """
         if branch is None:
             branch = self.root
         mins = np.full(self.ndim, np.inf)
@@ -663,41 +389,6 @@ class RCTree(object):
         return bbox
 
     def find_duplicate(self, point, tolerance=None):
-        """
-        If point is a duplicate of existing point in the tree, return the leaf
-        containing the point, else return None.
-
-        Parameters:
-        -----------
-        point: np.ndarray (1 x d)
-               Point to query in the tree.
-
-        tolerance: float
-                   Tolerance for determining whether or not point is a duplicate.
-
-        Returns:
-        --------
-        duplicate: Leaf or None
-                   If point is a duplicate, returns the leaf containing the point.
-                   If point is not a duplicate, return None.
-
-        Example:
-        --------
-        # Create RCTree
-        >>> X = np.random.randn(10, 2)
-        >>> tree = rrcf.RCTree(X)
-
-        # Insert new point
-        >>> new_point = np.array([4, 4])
-        >>> tree.insert_point(new_point, index=10)
-
-        # Search for duplicates
-        >>> tree.find_duplicate((3, 3))
-
-        >>> tree.find_duplicate((4, 4))
-
-        Leaf(10)
-        """
         nearest = self.query(point)
         if tolerance is None:
             if (nearest.x == point).all():
@@ -823,30 +514,6 @@ class RCTree(object):
             node = node.u
 
     def _insert_point_cut_(self, point, bbox):
-        """
-        Generates the cut dimension and cut value based on the InsertPoint algorithm.
-
-        Parameters:
-        -----------
-        point: np.ndarray (1 x d)
-               New point to be inserted.
-        bbox: np.ndarray(2 x d)
-              Bounding box of point set S.
-
-        Returns:
-        --------
-        cut_dimension: int
-                       Dimension to cut over.
-        cut: float
-             Value of cut.
-
-        Example:
-        --------
-        # Generate cut dimension and cut value
-        >>> _insert_point_cut_(x_inital, bbox)
-
-        (0, 0.9758881798109296)
-        """
         # Generate the bounding box
         bbox_hat = np.empty(bbox.shape)
         # Update the bounding box based on the internal point
